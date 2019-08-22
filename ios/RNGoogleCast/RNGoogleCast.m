@@ -15,7 +15,7 @@
   NSTimer *progressTimer;
 }
 
-@synthesize bridge = _bridge;
+//@synthesize bridge = _bridge;
 
 RCT_EXPORT_MODULE();
 
@@ -148,12 +148,12 @@ RCT_EXPORT_METHOD(sendMessage: (NSString *)message
                   resolver: (RCTPromiseResolveBlock) resolve
                   rejecter: (RCTPromiseRejectBlock) reject) {
   GCKCastChannel *channel = channels[namespace];
-  
+
   if (!channel) {
     NSError *error = [NSError errorWithDomain:NSCocoaErrorDomain code:GCKErrorCodeChannelNotConnected userInfo:nil];
     return reject(@"no_channel", [NSString stringWithFormat:@"Channel for namespace %@ does not exist. Did you forget to call initChannel?", namespace], error);
   }
-  
+
   NSError *error;
   [channel sendTextMessage:message error:&error];
   if (error != nil) {
@@ -197,10 +197,12 @@ RCT_EXPORT_METHOD(castMedia: (NSDictionary *)params
     contentType = @"video/mp4";
   }
 
-  [metadata addImage:[[GCKImage alloc]
+  if (imageUrl) {
+    [metadata addImage:[[GCKImage alloc]
                          initWithURL:[[NSURL alloc] initWithString:imageUrl]
                                width:480
                               height:360]];
+  }
 
   if (posterUrl) {
     [metadata addImage:[[GCKImage alloc]
@@ -208,7 +210,9 @@ RCT_EXPORT_METHOD(castMedia: (NSDictionary *)params
                                  width:480
                                 height:720]];
   }
-  GCKMediaInformation *mediaInfo =
+
+  if (mediaUrl) {
+    GCKMediaInformation *mediaInfo =
       [[GCKMediaInformation alloc] initWithContentID:mediaUrl
                                           streamType:GCKMediaStreamTypeBuffered
                                          contentType:contentType
@@ -217,15 +221,16 @@ RCT_EXPORT_METHOD(castMedia: (NSDictionary *)params
                                          mediaTracks:nil
                                       textTrackStyle:nil
                                           customData:customData];
-  // Cast the video.
-  if (castSession) {
-    [castSession.remoteMediaClient loadMedia:mediaInfo
-                                    autoplay:YES
-                                playPosition:playPosition];
-    resolve(mediaInfo);
-  } else {
-    NSError *error = [NSError errorWithDomain:NSCocoaErrorDomain code:GCKErrorCodeNoMediaSession userInfo:nil];
-    reject(@"no_session", @"No castSession!", error);
+    // Cast the video.
+    if (castSession) {
+      [castSession.remoteMediaClient loadMedia:mediaInfo
+                                      autoplay:YES
+                                  playPosition:playPosition];
+      resolve(mediaInfo);
+    } else {
+      NSError *error = [NSError errorWithDomain:NSCocoaErrorDomain code:GCKErrorCodeNoMediaSession userInfo:nil];
+      reject(@"no_session", @"No castSession!", error);
+    }
   }
 }
 
@@ -310,10 +315,10 @@ RCT_EXPORT_METHOD(seek : (int)playPosition) {
     playbackStarted = false;
     playbackEnded = false;
   }
-  
+
   double position = mediaStatus.streamPosition;
   double duration = mediaStatus.mediaInformation.streamDuration;
-  
+
   NSDictionary *status = @{
     @"playerState": @(mediaStatus.playerState),
     @"idleReason": @(mediaStatus.idleReason),
@@ -338,7 +343,7 @@ RCT_EXPORT_METHOD(seek : (int)playPosition) {
     [progressTimer invalidate];
     progressTimer = nil;
   }
-  
+
   if (!playbackStarted && mediaStatus.playerState == GCKMediaPlayerStatePlaying) {
     [self sendEventWithName:MEDIA_PLAYBACK_STARTED body:@{@"mediaStatus":status}];
     playbackStarted = true;
@@ -372,6 +377,11 @@ RCT_EXPORT_METHOD(seek : (int)playPosition) {
 
 -(void)castChannelDidDisconnect:(GCKGenericChannel *)channel {
     [self sendEventWithName:CHANNEL_DISCONNECTED body:@{@"channel":channel.protocolNamespace}];
+}
+
++ (BOOL)requiresMainQueueSetup
+{
+    return YES;
 }
 
 @end
