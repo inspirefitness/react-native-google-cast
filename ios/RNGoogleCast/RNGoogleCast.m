@@ -9,15 +9,20 @@
   bool hasListeners;
   NSMutableDictionary *channels;
   GCKCastSession *castSession;
+  GCKMediaInformation *mediaInfo;
   bool playbackStarted;
   bool playbackEnded;
   NSUInteger currentItemID;
   NSTimer *progressTimer;
 }
 
-//@synthesize bridge = _bridge;
+@synthesize bridge = _bridge;
 
 RCT_EXPORT_MODULE();
+
++ (BOOL)requiresMainQueueSetup {
+  return NO;
+}
 
 - (instancetype)init {
   self = [super init];
@@ -43,7 +48,9 @@ RCT_EXPORT_MODULE();
 
     @"CHANNEL_CONNECTED" : CHANNEL_CONNECTED,
     @"CHANNEL_MESSAGE_RECEIVED" : CHANNEL_MESSAGE_RECEIVED,
-    @"CHANNEL_DISCONNECTED" : CHANNEL_DISCONNECTED
+    @"CHANNEL_DISCONNECTED" : CHANNEL_DISCONNECTED,
+
+    @"CAST_AVAILABLE" : @YES
   };
 }
 
@@ -104,6 +111,35 @@ RCT_EXPORT_METHOD(launchExpandedControls) {
   dispatch_async(dispatch_get_main_queue(), ^{
     [GCKCastContext.sharedInstance presentDefaultExpandedMediaControls];
   });
+}
+
+RCT_EXPORT_METHOD(toggleSubtitles: (BOOL) enabled languageCode:(NSString *) languageCode) {
+  if (castSession == nil) return;
+
+  if (!enabled) {
+    [castSession.remoteMediaClient setActiveTrackIDs:@[]];
+    return;
+  }
+
+  NSArray *mediaTracks = mediaInfo.mediaTracks;
+  NSString *languageToSelect = languageCode != nil ? languageCode : DEFAULT_SUBTITLES_LANGUAGE;
+
+  if (mediaTracks == nil || [mediaTracks count] == 0) {
+    return;
+  }
+  
+  for(GCKMediaTrack *track in mediaTracks) {
+    if (track != nil && [[track languageCode] isEqualToString:languageToSelect]) {
+      [castSession.remoteMediaClient setActiveTrackIDs:@[@(track.identifier)]];
+      return;
+    }
+  }
+}
+
+RCT_EXPORT_METHOD(showCastPicker) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+[GCKCastContext.sharedInstance presentCastDialog];
+});
 }
 
 RCT_EXPORT_METHOD(showIntroductoryOverlay) {
@@ -197,12 +233,10 @@ RCT_EXPORT_METHOD(castMedia: (NSDictionary *)params
     contentType = @"video/mp4";
   }
 
-  if (imageUrl) {
-    [metadata addImage:[[GCKImage alloc]
+  [metadata addImage:[[GCKImage alloc]
                          initWithURL:[[NSURL alloc] initWithString:imageUrl]
                                width:480
                               height:360]];
-  }
 
   if (posterUrl) {
     [metadata addImage:[[GCKImage alloc]
@@ -210,9 +244,7 @@ RCT_EXPORT_METHOD(castMedia: (NSDictionary *)params
                                  width:480
                                 height:720]];
   }
-
-  if (mediaUrl) {
-    GCKMediaInformation *mediaInfo =
+  GCKMediaInformation *mediaInfo =
       [[GCKMediaInformation alloc] initWithContentID:mediaUrl
                                           streamType:GCKMediaStreamTypeBuffered
                                          contentType:contentType
@@ -221,16 +253,15 @@ RCT_EXPORT_METHOD(castMedia: (NSDictionary *)params
                                          mediaTracks:nil
                                       textTrackStyle:nil
                                           customData:customData];
-    // Cast the video.
-    if (castSession) {
-      [castSession.remoteMediaClient loadMedia:mediaInfo
-                                      autoplay:YES
-                                  playPosition:playPosition];
-      resolve(mediaInfo);
-    } else {
-      NSError *error = [NSError errorWithDomain:NSCocoaErrorDomain code:GCKErrorCodeNoMediaSession userInfo:nil];
-      reject(@"no_session", @"No castSession!", error);
-    }
+  // Cast the video.
+  if (castSession) {
+    [castSession.remoteMediaClient loadMedia:mediaInfo
+                                    autoplay:YES
+                                playPosition:playPosition];
+    resolve(mediaInfo);
+  } else {
+    NSError *error = [NSError errorWithDomain:NSCocoaErrorDomain code:GCKErrorCodeNoMediaSession userInfo:nil];
+    reject(@"no_session", @"No castSession!", error);
   }
 }
 
@@ -256,6 +287,11 @@ RCT_EXPORT_METHOD(seek : (int)playPosition) {
   if (castSession) {
     [castSession.remoteMediaClient seekToTimeInterval:playPosition];
   }
+}
+RCT_EXPORT_METHOD(setVolume : (float)volume) {
+    if (castSession) {
+        [castSession.remoteMediaClient setStreamVolume:volume];
+    }
 }
 
 #pragma mark - GCKSessionManagerListener events
@@ -347,11 +383,13 @@ RCT_EXPORT_METHOD(seek : (int)playPosition) {
   if (!playbackStarted && mediaStatus.playerState == GCKMediaPlayerStatePlaying) {
     [self sendEventWithName:MEDIA_PLAYBACK_STARTED body:@{@"mediaStatus":status}];
     playbackStarted = true;
+    mediaInfo = mediaStatus.mediaInformation;
   }
 
   if (!playbackEnded && mediaStatus.idleReason == GCKMediaPlayerIdleReasonFinished) {
     [self sendEventWithName:MEDIA_PLAYBACK_ENDED body:@{@"mediaStatus":status}];
     playbackEnded = true;
+    mediaInfo = mediaStatus.mediaInformation;
   }
 }
 
@@ -377,11 +415,6 @@ RCT_EXPORT_METHOD(seek : (int)playPosition) {
 
 -(void)castChannelDidDisconnect:(GCKGenericChannel *)channel {
     [self sendEventWithName:CHANNEL_DISCONNECTED body:@{@"channel":channel.protocolNamespace}];
-}
-
-+ (BOOL)requiresMainQueueSetup
-{
-    return YES;
 }
 
 @end
